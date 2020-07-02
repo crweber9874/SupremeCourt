@@ -1,0 +1,138 @@
+rm(list=ls())
+library(rstan)
+library(reshape2)
+require(data.table)
+### Declare Data
+load("/Users/chrisweber/Dropbox/Supreme Court Data/SCDB_2018_02_justiceCentered_Citation.Rdata")
+dat<-SCDB_2018_02_justiceCentered_Citation
+dat$y<-car::recode(dat$vote, "1=1; 2=0; 3:4=1; else=NA")
+### Structure Data --  
+dat$term<-tstrsplit(dat$caseId, "-", fixed=TRUE)[[1]]
+dat$case_term_id<-tstrsplit(dat$caseId, "-", fixed=TRUE)[[2]]
+### This creates an ID matrix, I don't think justices have an ID, so I gave them one ####
+### This needs to be used after retrieving posteriors ####
+JusticeID = dat %>% arrange(term, justiceName) %>% 
+  mutate(justiceID=as.numeric(as.factor(justiceName))) %>% 
+  group_by(caseId) %>% 
+  mutate(un=mean(y)) %>%
+  filter(un<1) %>%
+  ungroup() %>%
+  arrange(term, justiceName) %>% 
+  group_by(justiceName, justiceID) %>%
+  summarise()
+
+### Here is the issueArea code. We probably want to combine some due to sparsity issues. 
+### I tried. See below. It makes little substantive sense. I just combined smaller categories.
+### Otherwise, there are too many justice - case type combinations and too many instances of onl
+### a couple obs.
+# 1 cert
+# 2 appeal
+# 3 bail
+# 4 certification
+# 5 docketing fee
+# 6 rehearing or restored to calendar for reargument
+# 7 injunction
+# 8 mandamus
+# 9 original
+# 10 prohibition
+# 12 stay
+# 13 writ of error
+# 14 writ of habeas corpus
+# 15 unspecified, other
+
+### There is an error in the codebook - I don't know what 11 is..
+
+Vote =  dat %>% arrange(justiceName) %>% 
+  mutate(justiceID=as.numeric(as.factor(justiceName))) %>% 
+  group_by(caseId) %>% 
+  mutate(un=mean(y)) %>%
+  filter(un<1) %>%
+  ungroup() %>%
+  group_by(caseId) %>% 
+  mutate(un=mean(y)) %>%
+  filter(un<1) %>%
+  ungroup() %>%
+  arrange(justiceName) %>%
+  #mutate(Type=ifelse((issueArea==14 | issueArea==13), 6, issueArea )) %>%
+  # Here is the recode -- we'll need to turn it into something less silly.
+  mutate(Type= recode(issueArea, `1`=1, `2`=2,
+                     `3`=3, `4`=4, `5`=4,
+                     `6`=4, `7`=5, `8`=6,
+                     `9`=7, `10`=8, `11`=11, `12`=8,
+                     `13`=8, `14`=8, `15`=9)) %>%
+  mutate(JustType=paste0(as.character(justiceID),"-",as.character(Type))) %>%
+  mutate(JustTypeID=as.numeric(as.factor(JustType))) %>%
+  mutate(Case=caseId) %>%
+  mutate(CaseID=as.numeric(as.factor(caseId))) %>%
+  arrange(justiceID, CaseID, JustTypeID) %>%
+  select(c("y", "JustTypeID", "CaseID", "justiceID"))
+
+
+Vote %>% 
+  arrange(CaseID, justiceID, JustTypeID)
+
+stan.dat<- list(y=Vote$y,
+                Justice=Vote$justiceID,
+                Type=Vote$JustTypeID,
+                Case=Vote$CaseID,
+                ljust=max(Vote$justiceID),
+                ltype=max(Vote$JustTypeID),
+                lcase=max(Vote$CaseID),
+                N=length(Vote$y)
+)
+
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+
+### This is just a 2PL IRT model, with an effect for testlets
+two.pl<-"
+data {
+  int<lower=1> ljust;               // Number of justices
+  int<lower=1> ltype;               // Number of type-justice combinations
+  int<lower=1> lcase;               // Number of cases
+  int<lower=1> N;                   // Number of observations Case x Justice
+  int<lower=1, upper=N> Justice[N]; // Justice Indicator
+  int<lower=1, upper=N> Type[N];    // Justice-Type Indicator
+  int<lower=1, upper=N> Case[N];    // Case indicator
+  int<lower=0, upper=1> y[N];       // Data
+}
+parameters {
+  vector[lcase]          alpha;   // discrimination/loading/slope
+  vector[lcase]          beta;    // difficulty/intercept
+  vector[ljust]          theta;   // judicial ideology
+  vector[ltype]          testlet; // testlet effect
+  real<lower=0> sigma_beta;
+  real<lower=0> sigma_alpha;
+  real<lower=0> sigma_testlet[ltype];
+}
+model {
+  alpha      ~ lognormal(0, sigma_alpha);
+  beta       ~ normal(0,sigma_beta);
+  sigma_alpha~ cauchy(0, 5);
+  sigma_beta ~ cauchy(0, 5);
+for (i in 1:ltype){
+  testlet[i] ~ normal(0, sigma_testlet[i]);
+  sigma_testlet[i] ~ cauchy(0, 5);
+}
+  theta ~ normal(0, 1);
+
+for (i in 1:N){
+      y[i] ~ bernoulli_logit(alpha[Case[i]]*theta[Justice[i]]-beta[Case[i]]+testlet[Type[i]]);
+}
+}
+"
+### This takes some time.
+require(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+model<-stan_model(model_code=two.pl)
+vb(model,  stan.dat, output_samples=2000, tol_rel_obj=.0001, iter=30000)
+fit <- stan(model_code =two.pl, 
+            data = stan.dat, iter=1000, chains=1,
+            pars=c("theta", "alpha", "beta",  "testlet"),
+            control=list("max_treedepth"=15, "adapt_delta"=.99))
+
+
+
+
