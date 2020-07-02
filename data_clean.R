@@ -2,7 +2,6 @@ rm(list=ls())
 library(rstan)
 library(reshape2)
 require(data.table)
-### Declare Data
 load("/Users/chrisweber/Dropbox/Supreme Court Data/SCDB_2018_02_justiceCentered_Citation.Rdata")
 dat<-SCDB_2018_02_justiceCentered_Citation
 dat$y<-car::recode(dat$vote, "1=1; 2=0; 3:4=1; else=NA")
