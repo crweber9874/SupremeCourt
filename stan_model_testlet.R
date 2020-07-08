@@ -127,6 +127,11 @@ require(rstan)
 rstan_options(auto_write = TRUE)
 options(mc.cores = parallel::detectCores())
 
+fit <- stan(model_code =two.pl, 
+            data = stan.dat, iter=2000, chains=1,
+            pars=c("theta", "alpha", "beta",  "testlet"),
+            control=list("max_treedepth"=15, "adapt_delta"=.99))
+
 model<-stan_model(model_code=two.pl)
 fit<-vb(model,  stan.dat, output_samples=2000, tol_rel_obj=.001, iter=10000)
 
