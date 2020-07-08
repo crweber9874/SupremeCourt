@@ -2,7 +2,8 @@ rm(list=ls())
 library(rstan)
 library(reshape2)
 require(data.table)
-load("/Users/chrisweber/Dropbox/Supreme Court Data/SCDB_2018_02_justiceCentered_Citation.Rdata")
+library(dplyr)
+load("/home/crweber/Dropbox/Supreme Court Data/SCDB_2018_02_justiceCentered_Citation.Rdata")
 dat<-SCDB_2018_02_justiceCentered_Citation
 dat$y<-car::recode(dat$vote, "1=1; 2=0; 3:4=1; else=NA")
 ### Structure Data --  
@@ -20,26 +21,7 @@ JusticeID = dat %>% arrange(term, justiceName) %>%
   group_by(justiceName, justiceID) %>%
   summarise()
 
-### Here is the issueArea code. We probably want to combine some due to sparsity issues. 
-### I tried. See below. It makes little substantive sense. I just combined smaller categories.
-### Otherwise, there are too many justice - case type combinations and too many instances of onl
-### a couple obs.
-# 1 cert
-# 2 appeal
-# 3 bail
-# 4 certification
-# 5 docketing fee
-# 6 rehearing or restored to calendar for reargument
-# 7 injunction
-# 8 mandamus
-# 9 original
-# 10 prohibition
-# 12 stay
-# 13 writ of error
-# 14 writ of habeas corpus
-# 15 unspecified, other
-
-### There is an error in the codebook - I don't know what 11 is..
+# Misc cats 13 and 14 
 
 Vote =  dat %>% arrange(justiceName) %>% 
   mutate(justiceID=as.numeric(as.factor(justiceName))) %>% 
@@ -55,10 +37,10 @@ Vote =  dat %>% arrange(justiceName) %>%
   #mutate(Type=ifelse((issueArea==14 | issueArea==13), 6, issueArea )) %>%
   # Here is the recode -- we'll need to turn it into something less silly.
   mutate(Type= recode(issueArea, `1`=1, `2`=2,
-                     `3`=3, `4`=4, `5`=4,
-                     `6`=4, `7`=5, `8`=6,
-                     `9`=7, `10`=8, `11`=11, `12`=8,
-                     `13`=8, `14`=8, `15`=9)) %>%
+                      `3`=3, `4`=4, `5`=5,
+                      `6`=6, `7`=7, `8`=8,
+                      `9`=9, `10`=10, `11`=11, `12`=12,
+                      `13`=13, `14`=13)) %>%
   mutate(JustType=paste0(as.character(justiceID),"-",as.character(Type))) %>%
   mutate(JustTypeID=as.numeric(as.factor(JustType))) %>%
   mutate(Case=caseId) %>%
@@ -125,6 +107,14 @@ for (i in 1:N){
 require(rstan)
 rstan_options(auto_write = TRUE)
 options(mc.cores = parallel::detectCores())
+
+
+fit <- stan(model_code =two.pl, 
+            data = stan.dat, iter=2000, chains=1,
+            pars=c("theta", "alpha", "beta",  "testlet"),
+            control=list("max_treedepth"=15, "adapt_delta"=.99))
+
+
 model<-stan_model(model_code=two.pl)
 vb(model,  stan.dat, output_samples=2000, tol_rel_obj=.0001, iter=30000)
 fit <- stan(model_code =two.pl, 
